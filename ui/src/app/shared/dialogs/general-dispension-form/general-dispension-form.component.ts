@@ -1,4 +1,6 @@
+import { forEach } from 'cypress/types/lodash';
 import { Component, EventEmitter, Input, OnInit, Output } from "@angular/core";
+import { add, parseISO } from 'date-fns';
 import { uniqBy, keyBy } from "lodash";
 import { Observable } from "rxjs";
 import { FormValue } from "src/app/shared/modules/form/models/form-value.model";
@@ -9,6 +11,7 @@ import {
 import { Dropdown } from "../../modules/form/models/dropdown.model";
 import { Textbox } from "../../modules/form/models/text-box.model";
 import { ICARE_CONFIG } from "../../resources/config";
+import { getGenericDrugPrescriptionsFromVisit } from "../../helpers/visits.helper";
 import { DrugsService } from "../../resources/drugs/services/drugs.service";
 import { ObservationService } from "../../resources/observation/services/observation.service";
 import { OrdersService } from "../../resources/order/services/orders.service";
@@ -86,6 +89,7 @@ export class GeneralDispensingFormComponent implements OnInit {
   ) {}
 
   async ngOnInit() {
+    // this.getDrugsPrescribed();
     this.keyedPreviousVisitDrugOrders$ = this.ordersService
       .getOrdersByVisitAndOrderType({
         visit: this.previousVisit?.uuid,
@@ -110,6 +114,7 @@ export class GeneralDispensingFormComponent implements OnInit {
       this.generalPrescriptionDoseConcept,
       this.generalPrescriptionDurationConcept,
     ]);
+    console.log(this.genericPrescriptionConceptUuidsEvent);
 
     if (
       this.useSpecificDrugPrescription === "true" &&
@@ -141,6 +146,15 @@ export class GeneralDispensingFormComponent implements OnInit {
       });
     }
   }
+
+  // getDrugsPrescribed() {
+  //   this.drugsPrescribed = getGenericDrugPrescriptionsFromVisit(
+  //     this.visit,
+  //     this.genericPrescriptionOrderType
+  //   );
+  //   console.log(this.drugsPrescribed);
+  //   console.log('madawa yamefikaa');
+  // }
 
   onFormUpdate(
     formValues: FormValue,
@@ -201,6 +215,36 @@ export class GeneralDispensingFormComponent implements OnInit {
   }
 
   saveOrder(e: any, conceptFields: any) {
+    const prescriptions = getGenericDrugPrescriptionsFromVisit(this.currentVisit, this.orderType);
+    // let drug_names: string[] = [];;
+
+    // // Accessing the values
+    // prescriptions.forEach(item => {
+    //   if (this.specificDrugConceptUuid in item.obs){
+    //     drug_names.push(item.obs[this.specificDrugConceptUuid].comment);
+    //     console.log(item.obs[this.specificDrugConceptUuid]);
+        
+    //   }
+    // });
+    let drug_obs;
+    // prescriptions.forEach(item => {
+    //   if(item.obs[this.specificDrugConceptUuid].comment === this.formValues?.drug?.value.drug.display) {
+    //     drug_obs = item.obs
+    //   }
+    // })
+
+    for (const item of prescriptions) {
+      if (item.obs[this.specificDrugConceptUuid]?.comment === this.formValues?.drug?.value.drug.display) {
+        drug_obs = item.obs;
+        break; // Exit the loop once the condition is met
+      }
+    }
+
+    // console.log(drug_obs);
+    
+    // console.log(parseInt(drug_obs[this.generalPrescriptionDurationConcept].display.split(': ')[1], 10));
+    // console.log(drug_obs[this.durationUnitsSettings].display.split(': ')[1].toLowerCase());
+    
     if (!this.formValues?.drug?.value) {
       this.errors = [];
       setTimeout(() => {
@@ -209,13 +253,52 @@ export class GeneralDispensingFormComponent implements OnInit {
           {
             error: {
               message:
-                "Couldn't get the drug selection. Please, select drug to continue prescription!",
+              "Couldn't get the drug selection. Please, select drug to continue prescription!",
             },
           },
         ];
       });
-    } else {
-      this.savingOrder = true;
+    }
+    if(drug_obs &&
+      drug_obs[this.specificDrugConceptUuid].comment === this.formValues?.drug?.value.drug.display
+    ) {
+      const duration = parseInt(drug_obs[this.generalPrescriptionDurationConcept].display.split(': ')[1], 10)
+      const unit = drug_obs[this.durationUnitsSettings].display.split(': ')[1].toLowerCase()
+      const now = new Date();
+      const obs_datetime = drug_obs[this.specificDrugConceptUuid].obsDatetime.replace(/(\+|-)(\d{2})(\d{2})$/, '$1$2:$3')
+      // console.log(parseISO(obs_datetime))
+      // console.log(now);
+  
+      // Define the mapping of units to date-fns duration objects
+      const unitMap: { [key: string]: any } = {
+        minutes: { minutes: duration },
+        hours: { hours: duration },
+        days: { days: duration },
+        weeks: { weeks: duration }, // Adding weeks
+        months: { months: duration },
+        years: { years: duration },
+        // Add more units as needed
+      };
+      const result_time = add(parseISO(obs_datetime), unitMap[unit]);
+      // console.log(result_time);
+      // If the current time is less than the result time, show an error and exit
+    if (now < result_time) {
+      console.log('tumezuia kurudia dawa mda haujaisha');
+      setTimeout(() => {
+        this.errors = [
+          ...this.errors,
+          {
+            error: {
+              message: "The selected drug is already in the current prescription!",
+            },
+          },
+        ];
+      });
+      return; // Exit early if the condition is met
+    }
+    } 
+    // else {     
+      this.savingOrder = true;      
       let encounterObject = {
         patient: this.currentPatient?.id,
         encounterType: this.encounterType,
@@ -245,6 +328,9 @@ export class GeneralDispensingFormComponent implements OnInit {
         ],
         visit: this.currentVisit?.uuid,
       };
+
+      console.log(encounterObject);
+      
 
       let obs = conceptFields.map((conceptField) => {
         return {
@@ -336,6 +422,6 @@ export class GeneralDispensingFormComponent implements OnInit {
         });
 
       this.updateConsultationOrder.emit();
-    }
+    // }
   }
 }
